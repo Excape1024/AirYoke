@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">AirYoke</string>
+    <string name="panel_title">AIRYOKE  /  A320</string>
+    <string name="yoke_on">操纵 · 开</string>
+    <string name="yoke_off">操纵 · 关</string>
+    <string name="throttle_manual">推力 · 手动</string>
+    <string name="throttle_released">推力 · 交还</string>
+    <string name="calibrate">校准</string>
+    <string name="settings">设置</string>
+    <string name="spoilers_armed">预位 · 开</string>
+    <string name="spoilers_disarmed">预位</string>
+    <string name="brake">刹车</string>
+    <string name="parking_on">驻车 · 开</string>
+    <string name="parking_off">驻车</string>
+</resources>

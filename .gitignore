@@ -1,0 +1,34 @@
+# Android / Gradle 构建产物与本机配置
+.gradle/
+.kotlin/
+.androidsdk/
+.downloads/
+local.properties
+**/build/
+
+# .NET 构建产物
+**/bin/
+**/obj/
+*.pdb
+
+# 发布包、备份与运行日志
+dist/
+.backups/
+*.log
+
+# IDE 与操作系统文件
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# 签名文件和凭据
+*.jks
+*.keystore
+keystore.properties
+*.pfx
+*.p12
+*.key
+*.pem
+

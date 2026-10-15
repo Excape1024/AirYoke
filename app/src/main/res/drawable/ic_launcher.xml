@@ -1,0 +1,28 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 底色 -->
+    <path
+        android:fillColor="#0E1A24"
+        android:pathData="M0,0h108v108h-108z" />
+
+    <!-- 驾驶盘：横梁 + 左右握把 + 中央毂 -->
+    <path
+        android:fillColor="#4FC3F7"
+        android:pathData="M34,50h40v6h-40z" />
+    <path
+        android:fillColor="#4FC3F7"
+        android:pathData="M27,40h9v24h-9z" />
+    <path
+        android:fillColor="#4FC3F7"
+        android:pathData="M72,40h9v24h-9z" />
+
+    <!-- 中央毂 -->
+    <path
+        android:fillColor="#FFB74D"
+        android:pathData="M47,42h14v20h-14z" />
+
+</vector>

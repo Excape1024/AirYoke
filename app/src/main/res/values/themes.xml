@@ -1,0 +1,16 @@
+<resources>
+
+    <!--
+      座舱风格：深色、无标题栏。App 全程横屏常亮，见 MainActivity。
+
+      背景色放在 windowBackground 而不是布局根节点上：
+      两边都设的话，每一帧都要先画一遍主题背景、再画一遍布局背景 —— 全屏尺寸的过度绘制。
+    -->
+    <style name="Theme.AirYoke" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:windowBackground">@color/cockpit_background</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+</resources>

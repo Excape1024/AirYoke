@@ -1,0 +1,4 @@
+<resources>
+    <!-- 座舱底色。集中在这里定义，主题与各视图共用同一份。 -->
+    <color name="cockpit_background">#FF0B141C</color>
+</resources>
