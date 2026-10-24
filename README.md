@@ -2,7 +2,9 @@
 
 AirYoke 将安卓手机变成微软模拟飞行的有线体感操纵器。手机负责采集姿态和触控输入，Windows 桥接程序通过 SimConnect 把操纵量发送给模拟器。
 
-![AirYoke 手机界面](docs/images/手机界面.png)
+![AirYoke 手机应用界面截图](docs/images/airyoke-phone-1.5.1.png)
+
+手机实机界面截图：已选择 FlyByWire A32NX 稳定版；截图时电脑桥接尚未连接，因此没有模拟器杆位和 N1 回读。
 
 当前发布版本为 **1.5.1**，油门适配目标为 **MSFS 2020 的 iniBuilds A320neo V2 与 FlyByWire A32NX 稳定版**。游戏内最终验收尚未完成。
 
@@ -79,7 +81,7 @@ gradle/    Gradle Wrapper
 - Android Release 构建：通过。
 - Android Lint：检查结果见验证说明。
 - Windows 桥接程序自检：通过。
-- 本轮未安装手机、未操纵模拟器；实机误差与延迟待验收。
+- 已在 SM-S9380 手机上安装并打开 1.5.1，README 展示当前手机界面；截图时电脑桥接未连接，未操纵模拟器，实机误差与延迟待验收。
 
 详细范围与未验收项见 [验证说明](docs/验证说明.md)。
 
