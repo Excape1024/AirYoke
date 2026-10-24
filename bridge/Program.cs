@@ -37,6 +37,11 @@ public static class Program
 
     public static async Task<int> Main(string[] args)
     {
+        if (args.Contains("--enginewatch-v2") || args.Contains("--enginewatch-fbw"))
+        {
+            Console.OutputEncoding = Encoding.UTF8;
+            return EngineWatch.Run(args.Contains("--enginewatch-v2") ? AircraftProfile.IniBuilds : AircraftProfile.FlyByWire);
+        }
         if (args.Contains("--selftest"))
         {
             bool passed = SelfTest();
@@ -391,13 +396,13 @@ public static class Program
             return false;
         }
 
-        return ControlSelfTest.Run();
+        return ControlSelfTest.Run() && AircraftSelfTest.Run();
     }
 
     private static void PrintBanner()
     {
         Console.WriteLine();
-        Console.WriteLine("  AirYoke 1.5 桥接程序 —— 手机当客机操纵盘");
+        Console.WriteLine("  AirYoke 1.5.1 桥接程序 —— 手机当客机操纵盘");
         Console.WriteLine("  ─────────────────────────────────────────");
         Console.WriteLine($"  监听端口 {Protocol.Port}（UDP 广播 + TCP 回环）");
     }
@@ -418,8 +423,10 @@ public static class Program
 
               --selftest   仅运行协议自检
               --dry-run    仅验证手机链路，不连接模拟器
+              --enginewatch-v2   只读观察 V2 双杆与双发 N1，十秒后退出
+              --enginewatch-fbw  只读观察 FlyByWire 双杆与双发 N1，十秒后退出
 
-            版本 1.5 使用协议四，新增自动驾驶断开能力，请与 1.5 手机端配套使用。
+            版本 1.5.1 使用协议五，支持 V2 / FlyByWire 双杆与双发 N1，请与 1.5.1 手机端配套使用。
             """);
     }
 }

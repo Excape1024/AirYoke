@@ -50,6 +50,12 @@ public sealed class SimConnectOutput : ISimOutput
     private const uint EvSpoilersSet = 23, EvSpoilersArm = 24;
     private const uint EvFlaps1 = 25, EvFlaps2 = 26, EvFlaps3 = 27;
     private const uint EvApDisconnect = 28;
+    private const uint EvThrottle1 = 30, EvThrottle2 = 31;
+    private readonly AircraftTelemetry _aircraftTelemetry;
+    private byte _activeAircraft;
+    private bool _requireThrottleRelease;
+    private bool _customReverse;
+    private int _idleLeft, _idleRight;
 
     // ---- 遥测订阅 ----
     private const uint DefineTelemetry = 1;
@@ -121,6 +127,7 @@ public sealed class SimConnectOutput : ISimOutput
     public SimConnectOutput(Action<string> log)
     {
         _log = log;
+        _aircraftTelemetry = new AircraftTelemetry(log, _clock);
     }
 
     // 自检使用内存事件接收器，完全不加载或连接模拟器。
@@ -129,8 +136,10 @@ public sealed class SimConnectOutput : ISimOutput
         _log = _ => { };
         _eventSink = eventSink;
         _clock = clock;
+        _aircraftTelemetry = new AircraftTelemetry(_log, clock);
     }
     internal void TestTick() => SendLatest();
+    internal AircraftTelemetry TestAircraft => _aircraftTelemetry;
 
     public string Name => "SimConnect";
 
@@ -165,6 +174,7 @@ public sealed class SimConnectOutput : ISimOutput
 
         MapEvents();
         SubscribeTelemetry();
+        _aircraftTelemetry.Subscribe(_handle);
 
         _pumpTask = Task.Run(() => PumpLoop(_cts.Token));
         _log($"已连接模拟器，SimConnect.dll = {SimConnectApi.ResolvedPath}");
@@ -178,6 +188,8 @@ public sealed class SimConnectOutput : ISimOutput
         Map(EvElevator, "AXIS_ELEVATOR_SET");
         Map(EvRudder, "AXIS_RUDDER_SET");
         Map(EvThrottle, "AXIS_THROTTLE_SET");
+        Map(EvThrottle1, "THROTTLE1_AXIS_SET_EX1");
+        Map(EvThrottle2, "THROTTLE2_AXIS_SET_EX1");
         Map(EvThrottleDecr, "THROTTLE_DECR");
         Map(EvThrottleIncr, "THROTTLE_INCR");
         Map(EvReverseHold, "THROTTLE_REVERSE_THRUST_HOLD");
@@ -245,10 +257,9 @@ public sealed class SimConnectOutput : ISimOutput
         ("FLAPS HANDLE INDEX", "Number"),
         ("AUTOPILOT MASTER", "Bool"),
         ("SPOILERS HANDLE POSITION", "Percent Over 100"),
-        // 自动油门动的是这个手柄；把它回传手机，界面显示的才是飞机真实推力
+        // 仅供原版兼容；第三方空客必须使用独立杆位，不能把该值当成座舱杆角。
         ("GENERAL ENG THROTTLE LEVER POSITION:1", "Percent Over 100"),
-        // 自动油门接通与否。手机靠它显示 A/THR，并借此自学习 CL 档位 ——
-        // 空客的 A/THR 一接通，手柄必定停在 CL 档，此时上面的手柄位置就是 CL 的轴值。
+        // 仅显示自动油门状态，不从它学习卡位。
         ("AUTOTHROTTLE ACTIVE", "Bool"),
         ("SPOILERS ARMED", "Bool"),
         ("BRAKE PARKING INDICATOR", "Bool"),
@@ -274,6 +285,7 @@ public sealed class SimConnectOutput : ISimOutput
             // 收消息（必须与发送在同一线程）
             SimConnectApi.SimConnect_CallDispatch(_handle, _dispatch!, IntPtr.Zero);
             if (_handle == IntPtr.Zero) return;
+            _aircraftTelemetry.Poll(_handle);
 
             double now = Environment.TickCount64;
             if (now - _lastSendMs >= SendIntervalMs)
@@ -316,15 +328,32 @@ public sealed class SimConnectOutput : ISimOutput
             SendAxis(EvRudder, -state.RudderNorm);
         }
 
-        // ══ 油门只在用户按着滑条时才发 ══
-        //
-        // 这是自动油门警报的修复。之前是每 20ms 无条件发一次，
-        // 开了 A/THR 之后两边就会互相抢推力杆：A/THR 移动手柄 → 我们立刻覆盖回去
-        // → A/THR 再修正 → 再被覆盖。FADEC 检测到"自动油门接通中手柄却被外部移动"，
-        // 于是持续报警。
-        //
-        // 松手就完全不碰，控制权干净地交还给飞机。
-        if (state.ThrottleEngaged)
+        if (_activeAircraft != state.Aircraft)
+        {
+            ReleaseCustomReverse();
+            if (_inReverse) SendThrottle(0);
+            _activeAircraft = state.Aircraft;
+            _requireThrottleRelease = true;
+        }
+        // 机模切换、反馈中断后必须看到交还状态，禁止恢复旧的接管指令。
+        if (!state.ThrottleEngaged) _requireThrottleRelease = false;
+        if (state.Aircraft != AircraftProfile.Asobo)
+        {
+            var engine = _aircraftTelemetry.Read(state.Aircraft);
+            if (state.ThrottleEngaged && !_requireThrottleRelease && engine.TryAxes(state.ThrottleNorm, out int left, out int right))
+            {
+                Transmit(EvThrottle1, unchecked((uint)left));
+                Transmit(EvThrottle2, unchecked((uint)right));
+                engine.TryAxes(0, out _idleLeft, out _idleRight);
+                _customReverse = state.ThrottleNorm < 0;
+            }
+            else
+            {
+                ReleaseCustomReverse();
+                if (state.ThrottleEngaged) _requireThrottleRelease = true;
+            }
+        }
+        else if (state.ThrottleEngaged && !_requireThrottleRelease)
         {
             SendThrottle(state.ThrottleNorm);
         }
@@ -365,6 +394,8 @@ public sealed class SimConnectOutput : ISimOutput
 
     private void ReleaseMomentary()
     {
+        ReleaseCustomReverse();
+        _requireThrottleRelease = _activeAircraft != AircraftProfile.Asobo;
         _apDisconnectActive = false;
         if (_inReverse) SendThrottle(0f);
         if (_braking)
@@ -374,6 +405,18 @@ public sealed class SimConnectOutput : ISimOutput
             _braking = false;
         }
         SendAxis(EvAileron, 0); SendAxis(EvElevator, 0); SendAxis(EvRudder, 0);
+    }
+
+    private void ReleaseCustomReverse()
+    {
+        if (!_customReverse) return;
+        // 只对仍然加载的同一机模发送缓存的慢车轴值；切机后不能使用旧标定。
+        if ((_aircraftTelemetry.Read(_activeAircraft).Flags & 16) == 0)
+        {
+            Transmit(EvThrottle1, unchecked((uint)_idleLeft));
+            Transmit(EvThrottle2, unchecked((uint)_idleRight));
+        }
+        _customReverse = false;
     }
 
     /// <summary>
@@ -467,6 +510,9 @@ public sealed class SimConnectOutput : ISimOutput
 
     public Protocol.Telemetry BuildTelemetry(int seq)
     {
+        byte selected;
+        lock (_stateLock) selected = _latest.Aircraft;
+        var engine = _aircraftTelemetry.Read(selected);
         // 一次性快照，避免逐个字段加锁（每 100ms 一次，锁本身不贵，但读 11 次没必要）
         Span<double> f = stackalloc double[TelemetryFieldCount];
         bool complete = IsConnected;
@@ -475,7 +521,8 @@ public sealed class SimConnectOutput : ISimOutput
             for (int i = 0; i < TelemetryFieldCount; i++)
             {
                 f[i] = _telemetry[i];
-                complete &= _telemetryTimes[i] != 0 && Environment.TickCount64 - _telemetryTimes[i] < 1500;
+                if (i != FieldThrottleLever && i != FieldAutothrottle)
+                    complete &= _telemetryTimes[i] != 0 && _clock() - _telemetryTimes[i] < 1500;
             }
         }
 
@@ -491,35 +538,41 @@ public sealed class SimConnectOutput : ISimOutput
             FlapsIndex: (int)Math.Round(f[7]),
             AutopilotOn: f[8] > 0.5,
             LinkQuality: 100,
-            // 手柄位置 0..1 正好等于本 App 的油门语义，直接透传
-            ThrottlePos: (float)Math.Clamp(f[FieldThrottleLever], 0.0, 1.0),
+            ThrottlePos: selected == 0 ? (float)Math.Clamp(f[FieldThrottleLever], 0.0, 1.0) : engine.Left,
             SpoilersPos: (float)Math.Clamp(f[FieldSpoilers], 0.0, 1.0),
-            AutothrottleOn: f[FieldAutothrottle] > 0.5,
+            AutothrottleOn: selected == 0 ? f[FieldAutothrottle] > 0.5 : engine.Autothrust,
             SystemFlags: (byte)((complete ? 1 : 0)
                 | Protocol.SystemApDisconnectSupported
-                | (f[12] > .5 ? 2 : 0) | (f[13] > .5 ? 4 : 0)));
+                | (f[12] > .5 ? 2 : 0) | (f[13] > .5 ? 4 : 0)),
+            Aircraft: selected, EngineFlags: IsConnected || _eventSink != null ? engine.Flags : (byte)0,
+            ThrottlePos2: engine.Right, N1Left: engine.N1Left, N1Right: engine.N1Right, EngineAgeMs: engine.Age);
     }
 
     private void OnDispatch(IntPtr pData, uint cbData, IntPtr pContext)
     {
-        if (pData == IntPtr.Zero) return;
+        if (pData == IntPtr.Zero || cbData < 12) return;
         uint messageId = (uint)Marshal.ReadInt32(pData, SimConnectApi.RecvOffsetId);
+        if (_aircraftTelemetry.Dispatch(pData, cbData, messageId)) return;
         if (messageId == SimConnectApi.RECV_ID_QUIT)
         {
             SimConnectApi.SimConnect_Close(_handle);
             _handle = IntPtr.Zero;
             lock (_stateLock) _hasState = false;
             _inReverse = false; _braking = false;
+            _customReverse = false; _requireThrottleRelease = true;
+            _aircraftTelemetry.Reset();
             _log("模拟器已退出，等待重新连接。");
             return;
         }
         if (messageId == SimConnectApi.RECV_ID_EXCEPTION)
         {
+            if (cbData < 20) return;
             _log($"SimConnect 异常代码：{Marshal.ReadInt32(pData, 12)}，发送序号：{Marshal.ReadInt32(pData, 16)}");
             return;
         }
         if ((uint)Marshal.ReadInt32(pData, SimConnectApi.RecvOffsetId)
             != SimConnectApi.RECV_ID_SIMOBJECT_DATA) return;
+        if (cbData < 48) return;
 
         // 按 requestID 分派到对应字段
         uint requestId = (uint)Marshal.ReadInt32(pData, RecvOffsetRequestId);
@@ -533,7 +586,7 @@ public sealed class SimConnectOutput : ISimOutput
         lock (_telemetry)
         {
             _telemetry[index] = value;
-            _telemetryTimes[index] = Environment.TickCount64;
+            _telemetryTimes[index] = _clock();
         }
         Interlocked.Exchange(ref _lastTelemetryMs, Environment.TickCount64);
     }

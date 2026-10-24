@@ -41,9 +41,22 @@ class LinkManager(
     private val udp = UdpLink(onBridgeFound = { addr ->
         Log.i(TAG, "UDP 通道就绪，对端 $addr")
         peerAddress = addr
-    }, onTelemetry = onTelemetry)
+    }, onTelemetry = { acceptTelemetry(Channel.USB_TETHER_UDP, it) })
 
-    private val tcp = TcpLink(onTelemetry = onTelemetry)
+    private val tcp = TcpLink(onTelemetry = { acceptTelemetry(Channel.ADB_REVERSE_TCP, it) })
+    private var lastTelemetrySeq: Int? = null
+    private var lastTelemetryAt = 0L
+
+    @Synchronized private fun acceptTelemetry(source: Channel, t: Protocol.Telemetry) {
+        if (source != channel) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        val previous = lastTelemetrySeq
+        // 以有符号差比较，支持序号回绕；重连超过超时后接受桥接端的新序列。
+        if (previous != null && now - lastTelemetryAt < LINK_TIMEOUT_MS && t.seq - previous <= 0) return
+        lastTelemetrySeq = t.seq
+        lastTelemetryAt = now
+        onTelemetry(t)
+    }
 
     @Volatile
     private var running = false
@@ -69,7 +82,7 @@ class LinkManager(
     private var latest = Submission(ControlOutput(0f, 0f, 0f, 0f), false, false, AuxControls())
 
     private data class Submission(val output: ControlOutput, val calibrated: Boolean,
-        val throttleEngaged: Boolean, val controls: AuxControls)
+        val throttleEngaged: Boolean, val controls: AuxControls, val aircraft: Int = 1)
 
     /** 按键位掩码。离散事件，由界面按下时置位、发送后清除。 */
     private val pendingButtons = AtomicInteger(0)
@@ -108,8 +121,8 @@ class LinkManager(
 
     /** 由传感器回调调用。只更新最新值，不做任何 I/O。 */
     fun submit(output: ControlOutput, calibrated: Boolean, throttleEngaged: Boolean,
-        controls: AuxControls = AuxControls()) {
-        latest = Submission(output, calibrated, throttleEngaged, controls)
+        controls: AuxControls = AuxControls(), aircraft: Int = 1) {
+        latest = Submission(output, calibrated, throttleEngaged, controls, aircraft)
     }
 
     /** 按下一个按键（起落架/襟翼等）。离散事件，会随下一帧发出后自动清除。 */
@@ -212,7 +225,7 @@ class LinkManager(
                 val output = snapshot.output
                 val buttons = pendingButtons.get() or snapshot.controls.buttons
 
-                var flags = 0
+                var flags = (snapshot.aircraft and 3) shl 3
                 if (snapshot.calibrated) flags = flags or Protocol.FLAG_CALIBRATED
                 if (snapshot.throttleEngaged) flags = flags or Protocol.FLAG_THROTTLE_ENGAGED
 

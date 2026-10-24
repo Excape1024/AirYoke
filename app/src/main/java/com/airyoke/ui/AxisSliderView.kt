@@ -37,6 +37,8 @@ class AxisSliderView @JvmOverloads constructor(context: Context, attrs: Attribut
         set(v) { field = v; invalidate() }
     var feedbackValue: Float? = null
         set(v) { field = v?.takeIf { it.isFinite() }?.coerceIn(-1f, 1f); invalidate() }
+    var feedbackValue2: Float? = null
+        set(v) { field = v?.takeIf { it.isFinite() }?.coerceIn(-1f, 1f); invalidate() }
     var feedbackFresh = false
         set(v) { field = v; invalidate() }
     var showTarget = false
@@ -104,14 +106,28 @@ class AxisSliderView @JvmOverloads constructor(context: Context, attrs: Attribut
         }
         paint.color = if (feedbackMode && !feedbackFresh) 0xFF748696.toInt()
             else if (isEngaged) 0xFFABFFF0.toInt() else 0xFFDAE3EB.toInt()
-        if (vertical) rect.set(mid - dp(25f), position - dp(11f), mid + dp(25f), position + dp(11f))
+        if (vertical) rect.set(mid - dp(25f), position - dp(11f), mid + dp(if (feedbackMode) -1f else 25f), position + dp(11f))
         else rect.set(position - dp(12f), mid - dp(13f), position + dp(12f), mid + dp(13f))
         if (displayed != null) canvas.drawRoundRect(rect, dp(5f), dp(5f), paint)
         paint.color = 0xFF748696.toInt()
         paint.strokeWidth = dp(2f)
         if (displayed != null) {
-            if (vertical) canvas.drawLine(mid - dp(17f), position, mid + dp(17f), position, paint)
+            if (vertical) canvas.drawLine(mid - dp(17f), position, mid + dp(if (feedbackMode) -7f else 17f), position, paint)
             else canvas.drawLine(position, mid - dp(8f), position, mid + dp(8f), paint)
+        }
+        if (feedbackMode && vertical) {
+            feedbackValue2?.let { second ->
+                val y = end - fraction(second) * (end - start)
+                paint.color = if (feedbackFresh) 0xFF81C7FF.toInt() else 0xFF748696.toInt()
+                rect.set(mid + dp(1f), y - dp(11f), mid + dp(25f), y + dp(11f))
+                canvas.drawRoundRect(rect, dp(5f), dp(5f), paint)
+                paint.color = 0xFF263746.toInt(); paint.textSize = dp(11f); paint.textAlign = Paint.Align.CENTER
+                canvas.drawText("2", mid + dp(13f), y + dp(4f), paint)
+            }
+            if (displayed != null) {
+                paint.color = 0xFF263746.toInt(); paint.textSize = dp(11f); paint.textAlign = Paint.Align.CENTER
+                canvas.drawText("1", mid - dp(13f), position + dp(4f), paint)
+            }
         }
         // 目标使用橙色细线，回读更新不能移动触控目标或改变反推松手行为。
         if (feedbackMode && showTarget && (displayed == null || abs(value - displayed) >= .006f)) {
@@ -130,19 +146,20 @@ class AxisSliderView @JvmOverloads constructor(context: Context, attrs: Attribut
         val feedbackStatus = if (feedbackMode) when {
             displayed == null -> "等待位置反馈"
             !feedbackFresh -> "位置反馈已过期"
-            showTarget && value < 0 -> "反推位置暂不可用"
             showTarget -> "目标 ${displayCaption(value)}"
-            else -> "飞机位置"
+            else -> "座舱双杆位置"
         } else ""
         if (feedbackMode && vertical) {
             paint.textSize = dp(10f)
             paint.color = if (!feedbackFresh || showTarget) 0xFFFFB74D.toInt() else 0xFF9BACBD.toInt()
             canvas.drawText(feedbackStatus, width / 2f, dp(36f), paint)
+            canvas.drawText("杆位② · ${feedbackValue2?.let { displayCaption(it) } ?: "—"}", width / 2f, dp(50f), paint)
         }
-        contentDescription = "$label $caption $feedbackStatus".trim()
+        contentDescription = "$label $caption $feedbackStatus 杆位二 ${feedbackValue2?.let { displayCaption(it) } ?: "—"}".trim()
     }
     private fun displayCaption(v: Float): String = stops.firstOrNull { abs(v - it.first) < .006f }?.second
-        ?: if (v < 0 && !bipolar) "反推" else "${(v * 100).roundToInt()}%"
+        ?: if (feedbackMode) String.format(java.util.Locale.ROOT, "%.1f°", v * if (v < 0) 20f else 45f)
+        else if (v < 0 && !bipolar) "反推" else "${(v * 100).roundToInt()}%"
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!isEnabled) return false
         when (event.actionMasked) {

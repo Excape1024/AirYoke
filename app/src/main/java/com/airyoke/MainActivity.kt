@@ -9,7 +9,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.CheckBox
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -19,6 +18,8 @@ import com.airyoke.core.Attitude
 import com.airyoke.core.AutopilotDisconnectRequest
 import com.airyoke.core.ControlPipeline
 import com.airyoke.core.ThrottleState
+import com.airyoke.core.AircraftType
+import com.airyoke.core.EngineFeedback
 import com.airyoke.databinding.ActivityMainBinding
 import com.airyoke.link.AuxControls
 import com.airyoke.link.LinkManager
@@ -43,14 +44,16 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var telemetry: Protocol.Telemetry? = null
     @Volatile private var receivedAt = 0L
     private val throttleState = ThrottleState()
+    private val throttleState2 = ThrottleState()
+    private var aircraft = AircraftType.INIBUILDS
     private val autopilotDisconnect = AutopilotDisconnectRequest()
     private var rudder = 0f
     private var takeover = false
     private var yoke = true
     private var brake = false
     private var clUntil = 0L
-    private var cl = .89f
-    private var flex = .95f
+    private val cl = 25f / 45f
+    private val flex = 35f / 45f
     private var sync = false
     private var spoilers = 0f
     private var flaps = 0
@@ -79,23 +82,60 @@ class MainActivity : AppCompatActivity() {
         pipeline.aileronMapping = pipeline.aileronMapping.copy(inverted = store.loadInvertAileron())
         pipeline.elevatorMapping = pipeline.elevatorMapping.copy(inverted = store.loadInvertElevator())
         yoke = store.loadYokeEngaged()
-        // 使用新键，避免沿用旧版自动学习到的零推力。
-        cl = prefs.getFloat("cl", .89f).takeIf { it in .1f.. .94f } ?: .89f
-        flex = prefs.getFloat("flex", .95f).takeIf { it > cl && it < 1f } ?: .95f
+        aircraft = AircraftType.fromId(prefs.getInt("aircraft.v5", 1))
         sensor = AttitudeProvider(this) { m -> m.copyInto(matrix); hasMatrix = true }
-        link = LinkManager(onTelemetry = { telemetry = it; receivedAt = now() }, onStatus = { status = it })
+        link = LinkManager(onTelemetry = { packet ->
+            val arrival = now()
+            handler.post { telemetry = packet; receivedAt = arrival }
+        }, onStatus = { status = it })
         setup()
     }
     private fun now() = SystemClock.elapsedRealtime()
     private fun live(): Boolean = now() - receivedAt < 1500 && telemetry?.systemFlags?.and(1) == 1
     private fun toast(text: String) { Toast.makeText(this, text, Toast.LENGTH_SHORT).show() }
+    private fun controlReady(): Boolean =
+        EngineFeedback.leversValid(telemetry, aircraft.wireId, now() - receivedAt) &&
+            EngineFeedback.fresh(telemetry, aircraft.wireId, now() - receivedAt, Protocol.ENGINE_CONTROL_READY)
+
+    private fun stopThrottle() {
+        takeover = false; clUntil = 0
+        sync = true; binding.throttleTakeover.isChecked = false; sync = false
+        binding.throttleSlider.release()
+        updateTakeover()
+    }
+
+    private fun selectAircraft(selected: AircraftType) {
+        if (selected == aircraft) return
+        stopThrottle()
+        aircraft = selected
+        telemetry = null; receivedAt = 0
+        throttleState.reset(); throttleState2.reset()
+        binding.throttleSlider.setValueSilently(0f)
+        prefs.edit().putInt("aircraft.v5", aircraft.wireId).apply()
+        configureDetents(); publish(); render()
+    }
+
+    private fun chooseAircraft() {
+        AlertDialog.Builder(this).setTitle("选择正在飞行的机模")
+            .setSingleChoiceItems(AircraftType.entries.map { it.title }.toTypedArray(), aircraft.ordinal) { dialog, index ->
+                selectAircraft(AircraftType.entries[index]); dialog.dismiss()
+            }.setNegativeButton("取消", null).show()
+    }
 
     @SuppressLint("ClickableViewAccessibility")
     private fun setup() {
         binding.throttleSlider.apply {
-            label = "油门"; reverseDetentFraction = .18f; releaseNegativeToZero = true
+            label = "杆位①"; reverseDetentFraction = .18f; releaseNegativeToZero = true
             feedbackMode = true
-            onValueChanged = { throttleState.request(it); publish() }
+            onValueChanged = {
+                val reverseReady = EngineFeedback.fresh(telemetry, aircraft.wireId, now() - receivedAt, Protocol.ENGINE_REVERSE_READY)
+                val target = if (it < 0 && !reverseReady) 0f else it
+                if (target != it) {
+                    setValueSilently(target)
+                    toast("反推未就绪：请在飞机 EFB 启用并校准双轴反推")
+                }
+                throttleState.request(target); publish()
+            }
         }
         configureDetents()
         binding.rudderSlider.apply {
@@ -122,7 +162,12 @@ class MainActivity : AppCompatActivity() {
         binding.throttleTakeover.setOnCheckedChangeListener { _, checked ->
             if (sync) return@setOnCheckedChangeListener
             if (checked) {
-                throttleState.takeOver()
+                val t = telemetry
+                if (!controlReady() || t == null || abs(t.throttlePos - t.throttlePos2) > .006f || !throttleState.takeOver()) {
+                    stopThrottle()
+                    toast("等待有效双杆回读；两杆需对齐后接管")
+                    return@setOnCheckedChangeListener
+                }
                 binding.throttleSlider.setValueSilently(throttleState.target)
                 clUntil = 0
             } else {
@@ -166,6 +211,7 @@ class MainActivity : AppCompatActivity() {
             else toast("等待姿态传感器")
         }
         binding.settingsButton.setOnClickListener { settings() }
+        binding.aircraftSelector.setOnClickListener { chooseAircraft() }
     }
     private fun configureDetents() {
         binding.throttleSlider.stops = listOf(-1f to "反推", 0f to "慢车", cl to "CL", flex to "FLX", 1f to "TOGA")
@@ -174,13 +220,15 @@ class MainActivity : AppCompatActivity() {
         binding.throttleSlider.snapper.capture = listOf(.02f, .03f, .04f)[strength]
         binding.throttleSlider.snapper.release = listOf(.035f, .05f, .065f)[strength]
         binding.throttleSlider.invalidate()
+        binding.aircraftSelector.text = "${aircraft.title} ▾"
     }
     private fun updateTakeover() {
-        binding.throttleSlider.isEnabled = takeover
+        binding.throttleSlider.isEnabled = takeover && controlReady()
         binding.throttleSlider.alpha = if (takeover) 1f else .55f
     }
     private fun publish() {
         if (!::link.isInitialized) return
+        if ((takeover || clUntil > 0) && !controlReady()) stopThrottle()
         val t = now()
         val feedback = telemetry
         val apAvailable = live() && feedback != null &&
@@ -197,7 +245,7 @@ class MainActivity : AppCompatActivity() {
                 if (t < armUntil) armed else null,
                 if (t < spoilersUntil) spoilers else null,
                 if (t < flapsUntil) flaps else null,
-                autopilotDisconnect = apAvailable && autopilotDisconnect.shouldSend(t)))
+                autopilotDisconnect = apAvailable && autopilotDisconnect.shouldSend(t)), aircraft.wireId)
     }
     private fun render() {
         val axes = Attitude.toControlAxes(pipeline.lastEuler)
@@ -216,16 +264,35 @@ class MainActivity : AppCompatActivity() {
             autopilotDisconnect.status == AutopilotDisconnectRequest.Status.UNCONFIRMED -> R.string.ap_disconnect_unconfirmed
             else -> R.string.ap_disconnect
         })
-        throttleState.receive(t?.throttlePos, valid)
+        val elapsed = now() - receivedAt
+        val leverValid = EngineFeedback.leversValid(t, aircraft.wireId, elapsed)
+        val n1Valid = EngineFeedback.n1Valid(t, aircraft.wireId, elapsed)
+        val mismatch = t != null && (t.aircraft != aircraft.wireId || t.engineFlags and Protocol.ENGINE_MODEL_MISMATCH != 0)
+        if (mismatch) { throttleState.reset(); throttleState2.reset() }
+        throttleState.receive(t?.throttlePos, leverValid)
+        throttleState2.receive(t?.throttlePos2, leverValid)
         binding.throttleSlider.apply {
             feedbackValue = throttleState.actual
+            feedbackValue2 = throttleState2.actual
             feedbackFresh = throttleState.feedbackFresh
             showTarget = takeover || now() < clUntil
         }
+        binding.throttleTakeover.isEnabled = controlReady()
+        updateTakeover()
+        val engineStatus = when {
+            mismatch -> "机模不匹配或尚未识别，请核对选择"
+            !leverValid -> "杆位反馈不可用或已过期"
+            !n1Valid -> "N1 反馈不可用或已过期"
+            t!!.engineFlags and Protocol.ENGINE_REVERSE_READY == 0 -> "正推可用 · 反推需在 EFB 启用并校准"
+            else -> "双杆反馈 · 样本年龄 ${t.engineAgeMs + elapsed} ms"
+        }
+        binding.engineText.text = if (n1Valid)
+            "N1① ${String.format(java.util.Locale.ROOT, "%.1f", t!!.n1Left)}%   N1② ${String.format(java.util.Locale.ROOT, "%.1f", t.n1Right)}%\n$engineStatus"
+            else "N1① —   N1② —\n$engineStatus"
         binding.statusText.text = when {
             valid -> if (pipeline.calibration.isCalibrated) "● 已连接  ·  ${status.outHz.roundToInt()} Hz" else "● 已连接  ·  请校准"
             status.ready -> "电脑已连 · 等待模拟器"
-            else -> "等待电脑桥接 1.5"
+            else -> "等待电脑桥接 1.5.1（需两端配套）"
         }
         if (valid) {
             binding.flightText.text = "${t.airspeedKt.roundToInt()} kt   ·   ${t.altitudeFt.roundToInt()} ft"
@@ -253,26 +320,24 @@ class MainActivity : AppCompatActivity() {
         val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 8, 32, 8) }
         val a = CheckBox(this).apply { text = "副翼反转"; isChecked = store.loadInvertAileron() }
         val e = CheckBox(this).apply { text = "升降舵反转"; isChecked = store.loadInvertElevator() }
-        val info = TextView(this).apply { text = "A320 档位轴值（%）\n默认机型 CL 89、FLX 95。更换机型时按座舱实际卡位调整。" }
-        val c = EditText(this).apply { hint = "CL"; setText((cl * 100).toString()); inputType = 8194 }
-        val f = EditText(this).apply { hint = "FLX"; setText((flex * 100).toString()); inputType = 8194 }
+        val model = android.widget.Spinner(this).apply {
+            adapter = android.widget.ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
+                AircraftType.entries.map { it.title })
+            setSelection(aircraft.ordinal)
+        }
+        val info = TextView(this).apply { text = "杆位：慢车 0° / CL 25° / FLX 35° / TOGA 45°\n油门轴按飞机 EFB 的双轴校准映射；N1 独立回读。" }
         val strength = android.widget.Spinner(this).apply {
             adapter = android.widget.ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
                 arrayOf("吸附：轻柔", "吸附：标准", "吸附：较强"))
             setSelection(prefs.getInt("snap", 1).coerceIn(0, 2))
         }
-        listOf(a, e, info, c, f, strength).forEach(panel::addView)
+        listOf(model, a, e, info, strength).forEach(panel::addView)
         val dialog = AlertDialog.Builder(this).setTitle("控制设置").setView(panel)
             .setNegativeButton("取消", null).setPositiveButton("保存", null).create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val cv = c.text.toString().toFloatOrNull()?.div(100)
-                val fv = f.text.toString().toFloatOrNull()?.div(100)
-                if (cv == null || fv == null || cv !in .1f.. .94f || fv <= cv || fv >= 1) {
-                    toast("要求 10 ≤ CL < FLX < 100，且 CL ≤ 94"); return@setOnClickListener
-                }
-                cl = cv; flex = fv
-                prefs.edit().putFloat("cl", cl).putFloat("flex", flex).putInt("snap", strength.selectedItemPosition).apply()
+                selectAircraft(AircraftType.entries[model.selectedItemPosition])
+                prefs.edit().putInt("snap", strength.selectedItemPosition).apply()
                 store.saveInvertAileron(a.isChecked); store.saveInvertElevator(e.isChecked)
                 pipeline.aileronMapping = pipeline.aileronMapping.copy(inverted = a.isChecked)
                 pipeline.elevatorMapping = pipeline.elevatorMapping.copy(inverted = e.isChecked)

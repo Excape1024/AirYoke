@@ -15,8 +15,8 @@ public static class Protocol
 {
     public const ushort Magic = 0xA1C0;
 
-    /// <summary>协议四：启用辅助控制位和遥测状态位，包长度不变。</summary>
-    public const byte Version = 4;
+    /// <summary>协议五：机模选择、双杆、双发 N1 及独立反馈有效性。</summary>
+    public const byte Version = 5;
     /// <summary>状态包按键 bit6：专用自动驾驶断开请求。</summary>
     public const ushort ButtonApDisconnect = 0x40;
     /// <summary>遥测状态 bit3：支持专用自动驾驶断开请求。</summary>
@@ -24,7 +24,7 @@ public static class Protocol
     public const int Port = 9000;
 
     public const int StateSize = 26;
-    public const int TelemetrySize = 47;
+    public const int TelemetrySize = 63;
     public const int HandshakeSize = 6;
 
     // 状态包 flags 位
@@ -56,6 +56,7 @@ public static class Protocol
 
         /// <summary>手机是否正在写入推力目标。见 <see cref="FlagThrottleEngaged"/>。</summary>
         public bool ThrottleEngaged => (Flags & FlagThrottleEngaged) != 0;
+        public byte Aircraft => (byte)((Flags >> 3) & 3);
 
         // 归一化到 −1..1，交给操纵输出层
         public float ElevatorNorm => Elevator / AxisMax;
@@ -83,7 +84,13 @@ public static class Protocol
         float SpoilersPos,
         /// <summary>自动油门接通状态，仅显示，不用于学习 CL。</summary>
         bool AutothrottleOn,
-        byte SystemFlags = 0);
+        byte SystemFlags = 0,
+        byte Aircraft = 0,
+        byte EngineFlags = 0,
+        float ThrottlePos2 = 0,
+        float N1Left = 0,
+        float N1Right = 0,
+        ushort EngineAgeMs = ushort.MaxValue);
 
     // ---------------- 状态包 ----------------
 
@@ -159,8 +166,14 @@ public static class Protocol
         BinaryPrimitives.WriteSingleLittleEndian(dst.Slice(36, 4), t.ThrottlePos);
         BinaryPrimitives.WriteSingleLittleEndian(dst.Slice(40, 4), t.SpoilersPos);
         dst[44] = (byte)(t.AutothrottleOn ? 1 : 0);
+        dst[45] = t.Aircraft;
+        dst[46] = t.EngineFlags;
+        BinaryPrimitives.WriteSingleLittleEndian(dst.Slice(47, 4), t.ThrottlePos2);
+        BinaryPrimitives.WriteSingleLittleEndian(dst.Slice(51, 4), t.N1Left);
+        BinaryPrimitives.WriteSingleLittleEndian(dst.Slice(55, 4), t.N1Right);
+        BinaryPrimitives.WriteUInt16LittleEndian(dst.Slice(59, 2), t.EngineAgeMs);
         BinaryPrimitives.WriteUInt16LittleEndian(
-            dst.Slice(45, 2), Crc16(dst[..45]));
+            dst.Slice(61, 2), Crc16(dst[..61]));
 
         return TelemetrySize;
     }
@@ -190,7 +203,12 @@ public static class Protocol
             ThrottlePos: BinaryPrimitives.ReadSingleLittleEndian(src.Slice(36, 4)),
             SpoilersPos: BinaryPrimitives.ReadSingleLittleEndian(src.Slice(40, 4)),
             AutothrottleOn: src[44] != 0,
-            SystemFlags: src[3]);
+            SystemFlags: src[3],
+            Aircraft: src[45], EngineFlags: src[46],
+            ThrottlePos2: BinaryPrimitives.ReadSingleLittleEndian(src.Slice(47, 4)),
+            N1Left: BinaryPrimitives.ReadSingleLittleEndian(src.Slice(51, 4)),
+            N1Right: BinaryPrimitives.ReadSingleLittleEndian(src.Slice(55, 4)),
+            EngineAgeMs: BinaryPrimitives.ReadUInt16LittleEndian(src.Slice(59, 2)));
 
         return true;
     }

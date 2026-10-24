@@ -15,13 +15,19 @@ class ThrottleState {
     }
 
     fun receive(value: Float?, fresh: Boolean) {
-        feedbackFresh = fresh && value != null && value.isFinite()
-        // 与现行桥接协议一致：只提供 0..1 的正推力杆位置，不推测反推位置。
-        if (feedbackFresh) actual = value!!.coerceIn(0f, 1f)
+        feedbackFresh = fresh && value != null && value.isFinite() && value in -1f..1f
+        if (feedbackFresh) actual = value
     }
 
-    fun takeOver() {
-        // 以最近一次飞机位置开始接管；没有回读时保留原目标。
-        request(actual ?: target.coerceAtLeast(0f))
+    fun takeOver(): Boolean {
+        if (!feedbackFresh || actual == null) return false
+        request(actual!!)
+        return true
+    }
+
+    fun reset() {
+        target = 0f
+        actual = null
+        feedbackFresh = false
     }
 }

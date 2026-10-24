@@ -16,8 +16,8 @@ object Protocol {
     /** 包魔数，用来在混杂的 UDP 流量里识别自己的包。 */
     const val MAGIC = 0xA1C0
 
-    /** 协议四：沿用定长布局，启用辅助控制及遥测有效位。 */
-    const val VERSION = 4
+    /** 协议五：机模选择、双杆、双发 N1 及独立反馈有效性。 */
+    const val VERSION = 5
 
     /** 状态包按键 bit6：只断开自动驾驶，绝不切换为接通。 */
     const val BUTTON_AP_DISCONNECT = 0x40
@@ -31,7 +31,12 @@ object Protocol {
     const val STATE_SIZE = 26
 
     /** PC → 手机 的遥测包长度。 */
-    const val TELEMETRY_SIZE = 47
+    const val TELEMETRY_SIZE = 63
+    const val ENGINE_LEVERS_VALID = 1
+    const val ENGINE_N1_VALID = 2
+    const val ENGINE_CONTROL_READY = 4
+    const val ENGINE_REVERSE_READY = 8
+    const val ENGINE_MODEL_MISMATCH = 16
 
     // ---- 状态包 flags 位 ----
     /** 已完成校准。未校准时桥接程序可以据此拒绝输出，避免飞机乱动。 */
@@ -107,6 +112,7 @@ object Protocol {
 
         /** 手机是否正在写入推力目标。见 [FLAG_THROTTLE_ENGAGED]。 */
         val throttleEngaged: Boolean get() = (flags and FLAG_THROTTLE_ENGAGED) != 0
+        val aircraft: Int get() = (flags ushr 3) and 3
     }
 
     /**
@@ -175,18 +181,19 @@ object Protocol {
         val autopilotOn: Boolean,
         /** 链路质量 0..100，用于界面显示丢包情况。 */
         val linkQuality: Int,
-        /**
-         * 模拟器里的**实际**推力手柄位置，用本 App 的油门语义表示（0 = 慢车，1 = 满推力）。
-         *
-         * 用户没碰滑条时，界面上的油门滑条会跟着这个值走 ——
-         * 这样开了自动油门之后，手机显示的才是飞机真正的推力，而不是用户上次拨到的位置。
-         */
+        /** 一号座舱杆位。空客适配为杆角归一化，与发动机 N1 独立。 */
         val throttlePos: Float,
         /** 减速板手柄位置 0..1。 */
         val spoilersPos: Float,
         /** 自动油门接通状态，仅用于显示，不用于推断 CL 档位。 */
         val autothrottleOn: Boolean,
         val systemFlags: Int = 0,
+        val aircraft: Int = 0,
+        val engineFlags: Int = 0,
+        val throttlePos2: Float = 0f,
+        val n1Left: Float = 0f,
+        val n1Right: Float = 0f,
+        val engineAgeMs: Int = 65535,
     )
 
     fun encodeTelemetry(t: Telemetry, out: ByteArray, offset: Int = 0): Int {
@@ -208,6 +215,12 @@ object Protocol {
         i = putF32(out, i, t.throttlePos)
         i = putF32(out, i, t.spoilersPos)
         out[i++] = if (t.autothrottleOn) 1 else 0
+        out[i++] = t.aircraft.toByte()
+        out[i++] = t.engineFlags.toByte()
+        i = putF32(out, i, t.throttlePos2)
+        i = putF32(out, i, t.n1Left)
+        i = putF32(out, i, t.n1Right)
+        i = putU16(out, i, t.engineAgeMs)
         val crc = crc16(out, offset, i - offset)
         i = putU16(out, i, crc)
         return i - offset
@@ -236,12 +249,19 @@ object Protocol {
         i += 1
         val throttlePos = readF32(buf, i); i += 4
         val spoilersPos = readF32(buf, i); i += 4
-        val autothrottleOn = buf[i].toInt() != 0
+        val autothrottleOn = buf[i++].toInt() != 0
+        val aircraft = buf[i++].toInt() and 0xFF
+        val engineFlags = buf[i++].toInt() and 0xFF
+        val throttlePos2 = readF32(buf, i); i += 4
+        val n1Left = readF32(buf, i); i += 4
+        val n1Right = readF32(buf, i); i += 4
+        val engineAgeMs = readU16(buf, i)
 
         return Telemetry(
             seq, airspeed, altitude, heading, pitch, bank, verticalSpeed,
             gearDown, flaps, ap, quality, throttlePos, spoilersPos, autothrottleOn,
             buf[offset + 3].toInt() and 0xFF,
+            aircraft, engineFlags, throttlePos2, n1Left, n1Right, engineAgeMs,
         )
     }
 

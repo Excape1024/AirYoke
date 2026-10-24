@@ -97,6 +97,7 @@ class TcpLink(
 
     private fun receiveLoop(own: Socket, input: InputStream) {
         val buf = ByteArray(2048)
+        val decoder = TelemetryStreamDecoder()
 
         while (isCurrent(own)) {
             try {
@@ -105,12 +106,8 @@ class TcpLink(
 
                 if (isCurrent(own)) lastReceiveMs = System.currentTimeMillis()
 
-                // TCP 是字节流，没有消息边界。当前桥接程序只回定长遥测包，
-                // 但这里仍按"能解多少解多少"处理，避免将来升级协议时踩坑。
-                var offset = 0
-                while (offset + Protocol.TELEMETRY_SIZE <= read) {
-                    Protocol.decodeTelemetry(buf, read, offset)?.let(onTelemetry)
-                    offset += Protocol.TELEMETRY_SIZE
+                decoder.feed(buf, read) {
+                    if (isCurrent(own)) onTelemetry(it)
                 }
             } catch (e: Exception) {
                 if (isCurrent(own)) Log.w(TAG, "TCP 接收异常", e)

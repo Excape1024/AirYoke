@@ -63,6 +63,8 @@ public static class SimConnectApi
     public const uint RECV_ID_SIMOBJECT_DATA = 8;
     public const uint RECV_ID_SIMOBJECT_DATA_BYTYPE = 9;
     public const uint RECV_ID_CLIENT_DATA = 10;
+    public const uint RECV_ID_SYSTEM_STATE = 15;
+    public const uint RECV_ID_EVENT_FILENAME = 6;
 
     // ---------------- 事件发送标志 ----------------
 
@@ -184,6 +186,12 @@ public static class SimConnectApi
 
     [DllImport(DllName, CallingConvention = CallingConvention.StdCall)]
     public static extern int SimConnect_Close(IntPtr hSimConnect);
+
+    [DllImport(DllName, CharSet = CharSet.Ansi, CallingConvention = CallingConvention.StdCall)]
+    public static extern int SimConnect_RequestSystemState(IntPtr handle, uint requestId, string state);
+
+    [DllImport(DllName, CharSet = CharSet.Ansi, CallingConvention = CallingConvention.StdCall)]
+    public static extern int SimConnect_SubscribeToSystemEvent(IntPtr handle, uint eventId, string name);
 
     [DllImport(DllName, CallingConvention = CallingConvention.StdCall)]
     public static extern int SimConnect_CallDispatch(

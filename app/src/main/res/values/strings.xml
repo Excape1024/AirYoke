@@ -1,6 +1,7 @@
 <resources>
     <string name="app_name">AirYoke</string>
     <string name="panel_title">AIRYOKE  /  A320</string>
+    <string name="select_aircraft">选择机模</string>
     <string name="yoke_on">操纵 · 开</string>
     <string name="yoke_off">操纵 · 关</string>
     <string name="throttle_manual">推力 · 手动</string>
