@@ -397,7 +397,7 @@ public static class Program
     private static void PrintBanner()
     {
         Console.WriteLine();
-        Console.WriteLine("  AirYoke 桥接程序 —— 手机当客机操纵盘");
+        Console.WriteLine("  AirYoke 1.5 桥接程序 —— 手机当客机操纵盘");
         Console.WriteLine("  ─────────────────────────────────────────");
         Console.WriteLine($"  监听端口 {Protocol.Port}（UDP 广播 + TCP 回环）");
     }
@@ -419,7 +419,7 @@ public static class Program
               --selftest   仅运行协议自检
               --dry-run    仅验证手机链路，不连接模拟器
 
-            版本 1.4 使用协议四，请与 1.4 手机端配套使用。
+            版本 1.5 使用协议四，新增自动驾驶断开能力，请与 1.5 手机端配套使用。
             """);
     }
 }

@@ -17,6 +17,10 @@ public static class Protocol
 
     /// <summary>协议四：启用辅助控制位和遥测状态位，包长度不变。</summary>
     public const byte Version = 4;
+    /// <summary>状态包按键 bit6：专用自动驾驶断开请求。</summary>
+    public const ushort ButtonApDisconnect = 0x40;
+    /// <summary>遥测状态 bit3：支持专用自动驾驶断开请求。</summary>
+    public const byte SystemApDisconnectSupported = 0x08;
     public const int Port = 9000;
 
     public const int StateSize = 26;

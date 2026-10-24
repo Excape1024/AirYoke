@@ -10,6 +10,12 @@
     <string name="spoilers_armed">预位 · 开</string>
     <string name="spoilers_disarmed">预位</string>
     <string name="brake">刹车</string>
+    <string name="ap_disconnect">断开\n自动驾驶</string>
+    <string name="ap_disconnect_waiting">断开请求\n等待确认</string>
+    <string name="ap_disconnect_off">自动驾驶\n已断开</string>
+    <string name="ap_disconnect_unconfirmed">断开未确认\n点击重试</string>
+    <string name="ap_disconnect_unavailable">断开自动驾驶\n等待连接</string>
+    <string name="ap_disconnect_upgrade">断开自动驾驶\n请更新桥接</string>
     <string name="parking_on">驻车 · 开</string>
     <string name="parking_off">驻车</string>
 </resources>

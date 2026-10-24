@@ -23,6 +23,7 @@
             <ToggleButton android:background="@drawable/control_toggle" android:backgroundTint="@null" android:textColor="#DDEBE7" android:layout_margin="3dp" android:id="@+id/spoilerArm" android:layout_width="match_parent" android:layout_height="48dp" android:textOn="@string/spoilers_armed" android:textOff="@string/spoilers_disarmed" android:textSize="12sp" />
         </LinearLayout>
         <LinearLayout android:layout_width="90dp" android:layout_height="match_parent" android:gravity="bottom" android:orientation="vertical" android:paddingHorizontal="4dp">
+            <Button android:id="@+id/apDisconnectButton" android:layout_width="match_parent" android:layout_height="64dp" android:layout_marginBottom="8dp" android:text="@string/ap_disconnect" android:enabled="false" android:textSize="12sp" android:paddingHorizontal="2dp" android:backgroundTint="#8A3934" android:textColor="#FFF1ED" />
             <Button android:id="@+id/brakeButton" android:layout_width="match_parent" android:layout_height="132dp" android:text="@string/brake" android:textSize="17sp" android:backgroundTint="#315464" android:textColor="#E3EDF2" />
             <ToggleButton android:background="@drawable/control_toggle" android:backgroundTint="@null" android:textColor="#DDEBE7" android:layout_margin="3dp" android:id="@+id/parkingBrake" android:layout_width="match_parent" android:layout_height="56dp" android:textOn="@string/parking_on" android:textOff="@string/parking_off" android:textSize="12sp" />
         </LinearLayout>

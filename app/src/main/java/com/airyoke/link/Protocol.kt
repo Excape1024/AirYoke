@@ -19,6 +19,11 @@ object Protocol {
     /** 协议四：沿用定长布局，启用辅助控制及遥测有效位。 */
     const val VERSION = 4
 
+    /** 状态包按键 bit6：只断开自动驾驶，绝不切换为接通。 */
+    const val BUTTON_AP_DISCONNECT = 0x40
+    /** 遥测状态 bit3：桥接端支持专用断开指令。 */
+    const val SYSTEM_AP_DISCONNECT_SUPPORTED = 0x08
+
     /** 默认端口。手机与桥接程序必须一致。 */
     const val PORT = 9000
 

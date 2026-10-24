@@ -7,11 +7,13 @@ data class AuxControls(
     val armed: Boolean? = null,
     val spoilers: Float? = null,
     val flaps: Int? = null,
+    val autopilotDisconnect: Boolean = false,
 ) {
     val buttons: Int get() = (if (brake) 0x100 else 0) or
         (if (parking != null) 0x200 or (if (parking) 0x400 else 0) else 0) or
         (if (armed != null) 0x800 or (if (armed) 0x1000 else 0) else 0) or
-        (if (spoilers != null) 0x2000 else 0) or (if (flaps != null) 0x4000 else 0)
+        (if (spoilers != null) 0x2000 else 0) or (if (flaps != null) 0x4000 else 0) or
+        (if (autopilotDisconnect) Protocol.BUTTON_AP_DISCONNECT else 0)
     val aux: Int get() = (((spoilers ?: 0f).coerceIn(0f, 1f) * 1023).toInt()) or
         ((flaps ?: 0).coerceIn(0, 4) shl 10)
 }

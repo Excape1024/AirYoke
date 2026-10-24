@@ -49,6 +49,7 @@ public sealed class SimConnectOutput : ISimOutput
     private const uint EvBrakeLeft = 20, EvBrakeRight = 21, EvParkingSet = 22;
     private const uint EvSpoilersSet = 23, EvSpoilersArm = 24;
     private const uint EvFlaps1 = 25, EvFlaps2 = 26, EvFlaps3 = 27;
+    private const uint EvApDisconnect = 28;
 
     // ---- 遥测订阅 ----
     private const uint DefineTelemetry = 1;
@@ -97,6 +98,8 @@ public sealed class SimConnectOutput : ISimOutput
     private bool _braking;
     private long _lastAuxMs;
     private ushort _lastButtons;
+    private bool _apDisconnectActive;
+    private long _lastApDisconnectMs;
 
     /// <summary>当前是否处于反推状态。用于在进/出反推的那一刻做一次性的切换动作。</summary>
     private bool _inReverse;
@@ -183,6 +186,7 @@ public sealed class SimConnectOutput : ISimOutput
         Map(EvFlapsUp, "FLAPS_UP");
         Map(EvFlapsDown, "FLAPS_DOWN");
         Map(EvApMaster, "AP_MASTER");
+        Map(EvApDisconnect, "AUTOPILOT_OFF");
         Map(EvParkingBrakes, "PARKING_BRAKES");
         Map(EvPause, "PAUSE_TOGGLE");
         Map(EvBrakeLeft, "AXIS_LEFT_BRAKE_SET");
@@ -333,6 +337,14 @@ public sealed class SimConnectOutput : ISimOutput
             Transmit(EvBrakeLeft, amount); Transmit(EvBrakeRight, amount);
         }
         _braking = braking;
+        // 专用关闭事件可安全重发；首次立即发送，随后最多 10Hz。
+        bool disconnect = (state.Buttons & Protocol.ButtonApDisconnect) != 0;
+        if (disconnect && (!_apDisconnectActive || _clock() - _lastApDisconnectMs >= 100))
+        {
+            Transmit(EvApDisconnect);
+            _lastApDisconnectMs = _clock();
+        }
+        _apDisconnectActive = disconnect;
         // 有效位由手机限时发送。重复设置是幂等的，结束后让机内自动系统接管。
         if (_clock() - _lastAuxMs >= 100)
         {
@@ -353,6 +365,7 @@ public sealed class SimConnectOutput : ISimOutput
 
     private void ReleaseMomentary()
     {
+        _apDisconnectActive = false;
         if (_inReverse) SendThrottle(0f);
         if (_braking)
         {
@@ -435,7 +448,7 @@ public sealed class SimConnectOutput : ISimOutput
         if ((pressed & ButtonMask.Gear) != 0) Transmit(EvGearToggle);
         if ((pressed & ButtonMask.FlapsUp) != 0) Transmit(EvFlapsUp);
         if ((pressed & ButtonMask.FlapsDown) != 0) Transmit(EvFlapsDown);
-        if ((pressed & ButtonMask.Autopilot) != 0) Transmit(EvApMaster);
+        if ((pressed & ButtonMask.Autopilot) != 0 && (buttons & Protocol.ButtonApDisconnect) == 0) Transmit(EvApMaster);
         if ((pressed & ButtonMask.ParkingBrake) != 0) Transmit(EvParkingBrakes);
         if ((pressed & ButtonMask.Pause) != 0) Transmit(EvPause);
     }
@@ -483,6 +496,7 @@ public sealed class SimConnectOutput : ISimOutput
             SpoilersPos: (float)Math.Clamp(f[FieldSpoilers], 0.0, 1.0),
             AutothrottleOn: f[FieldAutothrottle] > 0.5,
             SystemFlags: (byte)((complete ? 1 : 0)
+                | Protocol.SystemApDisconnectSupported
                 | (f[12] > .5 ? 2 : 0) | (f[13] > .5 ? 4 : 0)));
     }
 

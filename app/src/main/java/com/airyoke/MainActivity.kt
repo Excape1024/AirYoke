@@ -16,7 +16,9 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.airyoke.core.Attitude
+import com.airyoke.core.AutopilotDisconnectRequest
 import com.airyoke.core.ControlPipeline
+import com.airyoke.core.ThrottleState
 import com.airyoke.databinding.ActivityMainBinding
 import com.airyoke.link.AuxControls
 import com.airyoke.link.LinkManager
@@ -40,7 +42,8 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var status = LinkManager.Status()
     @Volatile private var telemetry: Protocol.Telemetry? = null
     @Volatile private var receivedAt = 0L
-    private var throttle = 0f
+    private val throttleState = ThrottleState()
+    private val autopilotDisconnect = AutopilotDisconnectRequest()
     private var rudder = 0f
     private var takeover = false
     private var yoke = true
@@ -91,7 +94,8 @@ class MainActivity : AppCompatActivity() {
     private fun setup() {
         binding.throttleSlider.apply {
             label = "油门"; reverseDetentFraction = .18f; releaseNegativeToZero = true
-            onValueChanged = { throttle = it; publish() }
+            feedbackMode = true
+            onValueChanged = { throttleState.request(it); publish() }
         }
         configureDetents()
         binding.rudderSlider.apply {
@@ -118,11 +122,12 @@ class MainActivity : AppCompatActivity() {
         binding.throttleTakeover.setOnCheckedChangeListener { _, checked ->
             if (sync) return@setOnCheckedChangeListener
             if (checked) {
-                throttle = binding.throttleSlider.value.coerceAtLeast(0f)
+                throttleState.takeOver()
+                binding.throttleSlider.setValueSilently(throttleState.target)
                 clUntil = 0
             } else {
                 binding.throttleSlider.release()
-                throttle = cl
+                throttleState.request(cl)
                 binding.throttleSlider.setValueSilently(cl)
                 clUntil = now() + 800
                 toast("已发送 CL 目标；自动油门由座舱控制")
@@ -137,6 +142,14 @@ class MainActivity : AppCompatActivity() {
         }
         binding.parkingBrake.setOnCheckedChangeListener { _, checked ->
             if (!sync) { parking = checked; parkingUntil = now() + 800; pendingParking = true; publish() }
+        }
+        binding.apDisconnectButton.setOnClickListener {
+            val t = telemetry
+            if (live() && t != null && t.systemFlags and Protocol.SYSTEM_AP_DISCONNECT_SUPPORTED != 0) {
+                autopilotDisconnect.request(now(), t.seq)
+                publish()
+                render()
+            } else toast("等待支持断开功能的桥接程序与飞机反馈")
         }
         binding.brakeButton.setOnTouchListener { v, event ->
             when (event.actionMasked) {
@@ -169,6 +182,11 @@ class MainActivity : AppCompatActivity() {
     private fun publish() {
         if (!::link.isInitialized) return
         val t = now()
+        val feedback = telemetry
+        val apAvailable = live() && feedback != null &&
+            feedback.systemFlags and Protocol.SYSTEM_AP_DISCONNECT_SUPPORTED != 0
+        autopilotDisconnect.update(t, apAvailable, feedback?.seq, feedback?.autopilotOn)
+        val throttle = throttleState.target
         var output = pipeline.lastOutput.copy(rudder = rudder, throttle = throttle)
         if (hasMatrix) output = pipeline.update(matrix, rudder, throttle)
         if (!yoke) output = output.copy(aileron = 0f, elevator = 0f)
@@ -178,7 +196,8 @@ class MainActivity : AppCompatActivity() {
             AuxControls(brake, if (t < parkingUntil) parking else null,
                 if (t < armUntil) armed else null,
                 if (t < spoilersUntil) spoilers else null,
-                if (t < flapsUntil) flaps else null))
+                if (t < flapsUntil) flaps else null,
+                autopilotDisconnect = apAvailable && autopilotDisconnect.shouldSend(t)))
     }
     private fun render() {
         val axes = Attitude.toControlAxes(pipeline.lastEuler)
@@ -187,10 +206,26 @@ class MainActivity : AppCompatActivity() {
         binding.attitudeIndicator.pitchDeg = -axes.elevatorDeg
         val t = telemetry
         val valid = live() && t != null
+        val apSupported = t != null && t.systemFlags and Protocol.SYSTEM_AP_DISCONNECT_SUPPORTED != 0
+        binding.apDisconnectButton.isEnabled = valid && apSupported
+        binding.apDisconnectButton.text = getString(when {
+            !valid -> R.string.ap_disconnect_unavailable
+            !apSupported -> R.string.ap_disconnect_upgrade
+            autopilotDisconnect.status == AutopilotDisconnectRequest.Status.WAITING -> R.string.ap_disconnect_waiting
+            t?.autopilotOn == false -> R.string.ap_disconnect_off
+            autopilotDisconnect.status == AutopilotDisconnectRequest.Status.UNCONFIRMED -> R.string.ap_disconnect_unconfirmed
+            else -> R.string.ap_disconnect
+        })
+        throttleState.receive(t?.throttlePos, valid)
+        binding.throttleSlider.apply {
+            feedbackValue = throttleState.actual
+            feedbackFresh = throttleState.feedbackFresh
+            showTarget = takeover || now() < clUntil
+        }
         binding.statusText.text = when {
             valid -> if (pipeline.calibration.isCalibrated) "● 已连接  ·  ${status.outHz.roundToInt()} Hz" else "● 已连接  ·  请校准"
             status.ready -> "电脑已连 · 等待模拟器"
-            else -> "等待电脑桥接 1.4"
+            else -> "等待电脑桥接 1.5"
         }
         if (valid) {
             binding.flightText.text = "${t.airspeedKt.roundToInt()} kt   ·   ${t.altitudeFt.roundToInt()} ft"
@@ -198,10 +233,6 @@ class MainActivity : AppCompatActivity() {
             if (t.flapsIndex == flaps) pendingFlaps = false
             if ((t.systemFlags and 2 != 0) == armed) pendingArm = false
             if ((t.systemFlags and 4 != 0) == parking) pendingParking = false
-            if (!takeover && now() >= clUntil && t.throttlePos.isFinite()) {
-                throttle = t.throttlePos.coerceIn(0f, 1f)
-                binding.throttleSlider.setValueSilently(throttle)
-            }
             if (!binding.spoilerSlider.isEngaged && now() >= spoilersUntil && !pendingSpoilers)
                 binding.spoilerSlider.setValueSilently(t.spoilersPos)
             if (!binding.flapsSlider.isEngaged && now() >= flapsUntil && !pendingFlaps)
@@ -255,6 +286,7 @@ class MainActivity : AppCompatActivity() {
         handler.removeCallbacks(tick)
         binding.throttleSlider.release(); binding.rudderSlider.release()
         brake = false; clUntil = 0; takeover = false
+        autopilotDisconnect.cancel()
         spoilersUntil = 0; flapsUntil = 0; armUntil = 0; parkingUntil = 0
         // 断线保护由桥接端看门狗兜底，不依赖最后一个包必达。
         publish(); sensor.stop(); link.stop()

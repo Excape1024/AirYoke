@@ -32,6 +32,15 @@ class AxisSliderView @JvmOverloads constructor(context: Context, attrs: Attribut
     val snapper = DetentSnapper()
     var value = 0f
         set(v) { field = if (v.isFinite()) v.coerceIn(-1f, 1f) else 0f; invalidate() }
+    /** 仅油门启用：value 保留触控目标，主滑块单独显示模拟器反馈。 */
+    var feedbackMode = false
+        set(v) { field = v; invalidate() }
+    var feedbackValue: Float? = null
+        set(v) { field = v?.takeIf { it.isFinite() }?.coerceIn(-1f, 1f); invalidate() }
+    var feedbackFresh = false
+        set(v) { field = v; invalidate() }
+    var showTarget = false
+        set(v) { field = v; invalidate() }
     var onValueChanged: ((Float) -> Unit)? = null
     var onReleased: (() -> Unit)? = null
     var isEngaged = false
@@ -41,7 +50,7 @@ class AxisSliderView @JvmOverloads constructor(context: Context, attrs: Attribut
     private val rect = RectF()
     private val density = resources.displayMetrics.density
     private fun dp(v: Float) = v * density
-    private val start get() = if (orientation == Orientation.VERTICAL) dp(46f) else dp(24f)
+    private val start get() = if (orientation == Orientation.VERTICAL) dp(if (feedbackMode) 62f else 46f) else dp(24f)
     private val end get() = if (orientation == Orientation.VERTICAL) height - dp(20f) else width - dp(24f)
     private val zero get() = if (bipolar) 0.5f else reverseDetentFraction.coerceIn(0f, .45f)
     private fun fraction(v: Float): Float {
@@ -67,6 +76,7 @@ class AxisSliderView @JvmOverloads constructor(context: Context, attrs: Attribut
         invalidate()
     }
     override fun onDraw(canvas: Canvas) {
+        val displayed = if (feedbackMode) feedbackValue else value
         val vertical = orientation == Orientation.VERTICAL
         val mid = if (vertical) width * .34f else height * .65f
         val rail = dp(if (vertical) 15f else 12f)
@@ -74,41 +84,65 @@ class AxisSliderView @JvmOverloads constructor(context: Context, attrs: Attribut
         if (vertical) rect.set(mid - rail, start, mid + rail, end)
         else rect.set(start, mid - rail, end, mid + rail)
         canvas.drawRoundRect(rect, dp(9f), dp(9f), paint)
-        val position = if (vertical) end - fraction(value) * (end - start) else start + fraction(value) * (end - start)
-        paint.color = if (value < 0) 0xFFFFB74D.toInt() else 0xFF52CBBB.toInt()
+        val position = if (vertical) end - fraction(displayed ?: 0f) * (end - start) else start + fraction(displayed ?: 0f) * (end - start)
+        paint.color = if ((displayed ?: 0f) < 0) 0xFFFFB74D.toInt() else 0xFF52CBBB.toInt()
         val baseline = end - fraction(0f) * (end - start)
         if (vertical) rect.set(mid - dp(3f), minOf(position, baseline), mid + dp(3f), maxOf(position, baseline))
         else rect.set(minOf(position, width / 2f), mid - dp(3f), maxOf(position, width / 2f), mid + dp(3f))
-        canvas.drawRoundRect(rect, dp(3f), dp(3f), paint)
+        if (displayed != null) canvas.drawRoundRect(rect, dp(3f), dp(3f), paint)
         if (vertical) {
             val labels = if (stops.isNotEmpty()) stops else if (showScale) listOf(0f to "收", .5f to "½", 1f to "全") else emptyList()
             paint.textSize = dp(12f)
             paint.textAlign = Paint.Align.LEFT
             for ((v, text) in labels) {
                 val y = end - fraction(v) * (end - start)
-                paint.color = if (abs(value - v) < .006f) 0xFF66E0CE.toInt() else 0xFF9BACBD.toInt()
+                paint.color = if (displayed != null && (!feedbackMode || feedbackFresh) && abs(displayed - v) < .006f) 0xFF66E0CE.toInt() else 0xFF9BACBD.toInt()
                 paint.strokeWidth = dp(1.5f)
                 canvas.drawLine(mid + rail, y, mid + rail + dp(7f), y, paint)
                 canvas.drawText(text, mid + rail + dp(10f), y + dp(4f), paint)
             }
         }
-        paint.color = if (isEngaged) 0xFFABFFF0.toInt() else 0xFFDAE3EB.toInt()
+        paint.color = if (feedbackMode && !feedbackFresh) 0xFF748696.toInt()
+            else if (isEngaged) 0xFFABFFF0.toInt() else 0xFFDAE3EB.toInt()
         if (vertical) rect.set(mid - dp(25f), position - dp(11f), mid + dp(25f), position + dp(11f))
         else rect.set(position - dp(12f), mid - dp(13f), position + dp(12f), mid + dp(13f))
-        canvas.drawRoundRect(rect, dp(5f), dp(5f), paint)
+        if (displayed != null) canvas.drawRoundRect(rect, dp(5f), dp(5f), paint)
         paint.color = 0xFF748696.toInt()
         paint.strokeWidth = dp(2f)
-        if (vertical) canvas.drawLine(mid - dp(17f), position, mid + dp(17f), position, paint)
-        else canvas.drawLine(position, mid - dp(8f), position, mid + dp(8f), paint)
+        if (displayed != null) {
+            if (vertical) canvas.drawLine(mid - dp(17f), position, mid + dp(17f), position, paint)
+            else canvas.drawLine(position, mid - dp(8f), position, mid + dp(8f), paint)
+        }
+        // 目标使用橙色细线，回读更新不能移动触控目标或改变反推松手行为。
+        if (feedbackMode && showTarget && (displayed == null || abs(value - displayed) >= .006f)) {
+            val targetPosition = if (vertical) end - fraction(value) * (end - start) else start + fraction(value) * (end - start)
+            paint.color = 0xFFFFB74D.toInt()
+            paint.strokeWidth = dp(3f)
+            if (vertical) canvas.drawLine(mid - dp(27f), targetPosition, mid + dp(27f), targetPosition, paint)
+            else canvas.drawLine(targetPosition, mid - dp(15f), targetPosition, mid + dp(15f), paint)
+        }
         paint.textAlign = Paint.Align.CENTER
         paint.textSize = dp(13f)
         paint.color = 0xFFD7E3EC.toInt()
-        val caption = stops.firstOrNull { abs(value - it.first) < .006f }?.second
-            ?: if (value < 0 && !bipolar) "反推" else "${(value * 100).roundToInt()}%"
+        val caption = displayed?.let { displayCaption(it) } ?: "—"
         if (vertical) canvas.drawText("$label · $caption", width / 2f, dp(20f), paint)
         else canvas.drawText(label, width / 2f, dp(14f), paint)
-        contentDescription = "$label $caption"
+        val feedbackStatus = if (feedbackMode) when {
+            displayed == null -> "等待位置反馈"
+            !feedbackFresh -> "位置反馈已过期"
+            showTarget && value < 0 -> "反推位置暂不可用"
+            showTarget -> "目标 ${displayCaption(value)}"
+            else -> "飞机位置"
+        } else ""
+        if (feedbackMode && vertical) {
+            paint.textSize = dp(10f)
+            paint.color = if (!feedbackFresh || showTarget) 0xFFFFB74D.toInt() else 0xFF9BACBD.toInt()
+            canvas.drawText(feedbackStatus, width / 2f, dp(36f), paint)
+        }
+        contentDescription = "$label $caption $feedbackStatus".trim()
     }
+    private fun displayCaption(v: Float): String = stops.firstOrNull { abs(v - it.first) < .006f }?.second
+        ?: if (v < 0 && !bipolar) "反推" else "${(v * 100).roundToInt()}%"
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!isEnabled) return false
         when (event.actionMasked) {

@@ -31,6 +31,30 @@ internal static class ControlSelfTest
             Require(events.Any(e => e.Id == 4 && e.Data > 12770 && e.Data < 12790), "CL 目标必须保持在约 89% 而非零");
             events.Clear(); output.Apply(state with { Flags = 0, Throttle = 0, Buttons = 0 }); output.TestTick();
             Require(!events.Any(e => e.Id == 4), "交还后不能持续写零油门");
+            // 自动驾驶断开采用独立位和关闭事件，不得复用开关切换。
+            var disconnect = state with { Flags = 0, Throttle = 0, Buttons = Protocol.ButtonApDisconnect, Aux = 0 };
+            var packet = new byte[Protocol.StateSize];
+            Protocol.EncodeState(disconnect, packet);
+            Require(Protocol.TryDecodeState(packet, out var decoded) && decoded.Equals(disconnect), "断开指令协议往返失败");
+            events.Clear(); output.Apply(disconnect); output.TestTick();
+            Require(Has(28, 0) && !events.Any(e => e.Id == 13 || e.Id == 4), "断开必须只发送关闭事件，不得切换或写油门");
+            events.Clear(); now += 20; output.Apply(disconnect); output.TestTick();
+            Require(!events.Any(e => e.Id == 28), "断开重发应限制在10Hz以内");
+            now += 80; output.Apply(disconnect); output.TestTick();
+            Require(events.Count(e => e.Id == 28) == 1 && !events.Any(e => e.Id == 13), "断开重发不得重新接通");
+            events.Clear(); output.Apply(disconnect with { Buttons = 0 }); now += 100; output.TestTick();
+            Require(!events.Any(e => e.Id == 28), "发送窗口结束后必须停止断开指令");
+            events.Clear(); output.Apply(disconnect with { Buttons = Protocol.ButtonApDisconnect | ButtonMask.Autopilot }); output.TestTick();
+            Require(Has(28, 0) && !events.Any(e => e.Id == 13), "同时收到开关与断开时必须以断开为准");
+            events.Clear(); now += 501; output.TestTick();
+            Require(!events.Any(e => e.Id == 28), "断线看门狗不能重发断开指令");
+            events.Clear(); output.Apply(disconnect with { Buttons = 0 }); output.TestTick();
+            Require(!events.Any(e => e.Id == 28), "重连后无新请求不能重放断开指令");
+            var telemetry = output.BuildTelemetry(42);
+            Require((telemetry.SystemFlags & Protocol.SystemApDisconnectSupported) != 0, "必须公布断开能力位");
+            var telemetryPacket = new byte[Protocol.TelemetrySize];
+            Protocol.EncodeTelemetry(telemetry, telemetryPacket);
+            Require(Protocol.TryDecodeTelemetry(telemetryPacket, out var telemetryBack) && telemetryBack.Equals(telemetry), "能力位遥测往返失败");
             return true;
         }
         catch (InvalidOperationException ex) { Console.Error.WriteLine(ex.Message); return false; }
